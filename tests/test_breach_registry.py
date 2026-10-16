@@ -87,7 +87,7 @@ def test_adjudication_severity_none_dismisses_claim(
 
     # Bob files a claim against Alice
     claim_id = file_claim(registry, direct_vm, direct_bob, direct_alice)
-    assert claim_id == 1
+    assert claim_id == 0
 
     # Mock web evidence and LLM evaluation
     direct_vm.mock_web(

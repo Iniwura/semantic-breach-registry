@@ -1,4 +1,4 @@
-# { "Depends": "py-genlayer:1.0.0" }
+# { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
 
 from enum import IntEnum
 from dataclasses import dataclass
@@ -9,6 +9,18 @@ from genlayer import *
 
 MAX_FETCHED_CONTENT = 16384
 DEFAULT_FILING_FEE = 10000000000000000  # 0.01 native token / ETH
+
+
+if "UserError" not in globals():
+    class UserError(Exception):
+        """User-revert exception for contract validation errors."""
+        pass
+
+
+def to_address(val) -> Address:
+    if isinstance(val, Address):
+        return val
+    return Address(str(val))
 
 
 class Severity(IntEnum):
@@ -43,8 +55,8 @@ class BreachClaim:
     evidence_url: str
     clause_reference: str
     filing_time: u64
-    status: ClaimStatus
-    severity_assigned: Severity
+    status: u32
+    severity_assigned: u32
     deposit: u256
     slashed_amount: u256
 
@@ -56,28 +68,26 @@ class SemanticBreachRegistry(gl.Contract):
     filing_fee: u256
 
     def __init__(self, filing_fee: u256 = u256(DEFAULT_FILING_FEE)):
-        self.agents = TreeMap[Address, AgentProfile]()
-        self.claims = TreeMap[u32, BreachClaim]()
-        self.next_claim_id = u32(1)
+        self.next_claim_id = u32(0)
         self.filing_fee = filing_fee
 
     # ─────────────────────────────────────────────────────────────
     # Public Write Methods
     # ─────────────────────────────────────────────────────────────
 
-    @gl.public.write
+    @gl.public.write.payable
     def register_agent(self, scope_hash: str):
         """
         Register a new autonomous agent with a locked collateral bond and baseline standing.
         Payable: gl.message.value is staked as the initial bond.
         """
-        sender = gl.message.sender_address
+        sender = to_address(gl.message.sender_address)
         deposit_val = gl.message.value
 
         if deposit_val <= 0:
-            raise gl.UserError("Initial bond deposit must be greater than zero.")
+            raise UserError("Initial bond deposit must be greater than zero.")
         if sender in self.agents and self.agents[sender].active:
-            raise gl.UserError("Agent is already registered and active.")
+            raise UserError("Agent is already registered and active.")
 
         self.agents[sender] = AgentProfile(
             bond_balance=deposit_val,
@@ -86,46 +96,48 @@ class SemanticBreachRegistry(gl.Contract):
             active=True,
         )
 
-    @gl.public.write
+    @gl.public.write.payable
     def top_up_bond(self, agent: Address):
         """
         Increase the collateral bond balance for an existing registered agent.
         Payable: gl.message.value is added to the agent's bond balance.
         """
+        agent = to_address(agent)
         deposit_val = gl.message.value
         if deposit_val <= 0:
-            raise gl.UserError("Top-up amount must be greater than zero.")
+            raise UserError("Top-up amount must be greater than zero.")
         if agent not in self.agents:
-            raise gl.UserError("Agent not found in registry.")
+            raise UserError("Agent not found in registry.")
 
         profile = self.agents[agent]
         profile.bond_balance = u256(int(profile.bond_balance) + int(deposit_val))
         self.agents[agent] = profile
 
-    @gl.public.write
+    @gl.public.write.payable
     def file_claim(self, agent: Address, evidence_url: str, clause_reference: str) -> u32:
         """
         File an alleged breach claim against an agent with a verifiable evidence URL and cited clause.
         Payable: Requires a nominal deposit equal to or greater than the filing fee.
         """
+        agent = to_address(agent)
         deposit_val = gl.message.value
         if deposit_val < self.filing_fee:
-            raise gl.UserError("Deposit is less than the required filing fee.")
+            raise UserError("Deposit is less than the required filing fee.")
         if agent not in self.agents:
-            raise gl.UserError("Target agent not found in registry.")
+            raise UserError("Target agent not found in registry.")
 
-        claim_id = self.next_claim_id
+        claim_id = u32(self.next_claim_id)
         self.next_claim_id = u32(int(self.next_claim_id) + 1)
 
         claim = BreachClaim(
             claim_id=claim_id,
-            claimant=gl.message.sender_address,
+            claimant=to_address(gl.message.sender_address),
             agent=agent,
             evidence_url=str(evidence_url),
             clause_reference=str(clause_reference),
             filing_time=u64(0),
-            status=ClaimStatus.PENDING,
-            severity_assigned=Severity.NONE,
+            status=u32(ClaimStatus.PENDING),
+            severity_assigned=u32(Severity.NONE),
             deposit=deposit_val,
             slashed_amount=u256(0),
         )
@@ -139,21 +151,22 @@ class SemanticBreachRegistry(gl.Contract):
         guaranteed by GenLayer's strict equivalence principle (gl.eq_principle.strict_eq).
         Executes deterministic slashing or fee reallocation based on assigned severity.
         """
+        claim_id = u32(claim_id)
         if claim_id not in self.claims:
-            raise gl.UserError("Claim ID not found.")
+            raise UserError("Claim ID not found.")
 
         claim = self.claims[claim_id]
         if claim.status != ClaimStatus.PENDING:
-            raise gl.UserError("Claim is not in PENDING status.")
+            raise UserError("Claim is not in PENDING status.")
 
         agent_addr = claim.agent
         if agent_addr not in self.agents:
-            raise gl.UserError("Target agent does not exist.")
+            raise UserError("Target agent does not exist.")
 
         agent_profile = self.agents[agent_addr]
 
         # Isolated parameterless nondet evaluation function for strict equivalence
-        def evaluate_breach_nondet() -> dict:
+        def evaluate_breach_nondet() -> str:
             evidence_content = ""
             try:
                 raw_rendered = gl.nondet.web.render(claim.evidence_url, mode="text")
@@ -191,11 +204,7 @@ INSTRUCTIONS:
 You MUST respond ONLY with a valid JSON object in this exact schema:
 {{"severity": "NONE"|"MINOR"|"MATERIAL"|"GROSS", "reason": "<concise explanation>"}}
 """
-            return gl.nondet.exec_prompt(prompt, response_format="json")
-
-        # Run non-deterministic consensus via strict equivalence
-        try:
-            raw_evaluation = gl.eq_principle.strict_eq(evaluate_breach_nondet)
+            raw_evaluation = gl.nondet.exec_prompt(prompt, response_format="json")
             if isinstance(raw_evaluation, str):
                 evaluation = json.loads(raw_evaluation)
             elif isinstance(raw_evaluation, dict):
@@ -203,7 +212,14 @@ You MUST respond ONLY with a valid JSON object in this exact schema:
             else:
                 raise ValueError("Evaluation result must be dict or JSON string.")
 
-            severity_raw = str(evaluation.get("severity", "")).strip().upper()
+            sev = str(evaluation.get("severity", "")).strip().upper()
+            if sev not in ["NONE", "MINOR", "MATERIAL", "GROSS"]:
+                raise ValueError(f"Unrecognized severity rating: {sev}")
+            return sev
+
+        # Run non-deterministic consensus via strict equivalence
+        try:
+            severity_raw = gl.eq_principle.strict_eq(evaluate_breach_nondet)
             severity_mapping = {
                 "NONE": Severity.NONE,
                 "MINOR": Severity.MINOR,
@@ -214,10 +230,10 @@ You MUST respond ONLY with a valid JSON object in this exact schema:
                 raise ValueError(f"Unrecognized severity rating: {severity_raw}")
 
             assigned_severity = severity_mapping[severity_raw]
-            reason = str(evaluation.get("reason", "Consensus evaluation completed."))
+            reason = f"Consensus evaluation confirmed severity: {severity_raw}"
         except Exception as exc:
             # Consensus disagreement, network failure, or malformed JSON fails closed
-            claim.status = ClaimStatus.FAILED_CLOSED
+            claim.status = u32(ClaimStatus.FAILED_CLOSED)
             self.claims[claim_id] = claim
             return {
                 "status": int(ClaimStatus.FAILED_CLOSED),
@@ -231,27 +247,27 @@ You MUST respond ONLY with a valid JSON object in this exact schema:
         slashed_amount = 0
 
         if assigned_severity == Severity.NONE:
-            claim.status = ClaimStatus.DISMISSED
-            claim.severity_assigned = Severity.NONE
+            claim.status = u32(ClaimStatus.DISMISSED)
+            claim.severity_assigned = u32(Severity.NONE)
             # Frivolous/unsubstantiated claim: Filing fee is awarded to the agent's bond
             agent_profile.bond_balance = u256(current_bond + int(claim.deposit))
         elif assigned_severity == Severity.MINOR:
-            claim.status = ClaimStatus.RESOLVED
-            claim.severity_assigned = Severity.MINOR
+            claim.status = u32(ClaimStatus.RESOLVED)
+            claim.severity_assigned = u32(Severity.MINOR)
             slashed_amount = (current_bond * 15) // 100
             agent_profile.bond_balance = u256(current_bond - slashed_amount)
             new_score = max(0, int(agent_profile.standing_score) - 10)
             agent_profile.standing_score = u32(new_score)
         elif assigned_severity == Severity.MATERIAL:
-            claim.status = ClaimStatus.RESOLVED
-            claim.severity_assigned = Severity.MATERIAL
+            claim.status = u32(ClaimStatus.RESOLVED)
+            claim.severity_assigned = u32(Severity.MATERIAL)
             slashed_amount = (current_bond * 50) // 100
             agent_profile.bond_balance = u256(current_bond - slashed_amount)
             new_score = max(0, int(agent_profile.standing_score) - 35)
             agent_profile.standing_score = u32(new_score)
         elif assigned_severity == Severity.GROSS:
-            claim.status = ClaimStatus.RESOLVED
-            claim.severity_assigned = Severity.GROSS
+            claim.status = u32(ClaimStatus.RESOLVED)
+            claim.severity_assigned = u32(Severity.GROSS)
             slashed_amount = current_bond
             agent_profile.bond_balance = u256(0)
             agent_profile.standing_score = u32(0)
@@ -278,6 +294,7 @@ You MUST respond ONLY with a valid JSON object in this exact schema:
         Inspect the active standing, bond balance, and scope of an agent.
         Composable integration point for counterparties, pools, or orchestrators.
         """
+        agent = to_address(agent)
         if agent not in self.agents:
             return {
                 "registered": False,
@@ -303,6 +320,7 @@ You MUST respond ONLY with a valid JSON object in this exact schema:
         Returns True if and only if the agent is active, maintains positive standing,
         and retains non-zero collateral bond balance.
         """
+        agent = to_address(agent)
         if agent not in self.agents:
             return False
         profile = self.agents[agent]
@@ -313,14 +331,15 @@ You MUST respond ONLY with a valid JSON object in this exact schema:
         """
         Read detailed metadata and adjudication outcome of a claim.
         """
+        claim_id = u32(claim_id)
         if claim_id not in self.claims:
-            raise gl.UserError("Claim not found.")
+            raise UserError("Claim not found.")
 
         c = self.claims[claim_id]
         return {
             "claim_id": int(c.claim_id),
-            "claimant": c.claimant,
-            "agent": c.agent,
+            "claimant": str(c.claimant),
+            "agent": str(c.agent),
             "evidence_url": c.evidence_url,
             "clause_reference": c.clause_reference,
             "filing_time": int(c.filing_time),

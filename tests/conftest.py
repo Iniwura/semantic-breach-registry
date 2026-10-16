@@ -159,12 +159,22 @@ def _ensure_genlayer_module():
     gl_mod = types.ModuleType("genlayer")
 
     class Contract:
-        pass
+        def __new__(cls, *args, **kwargs):
+            instance = super().__new__(cls)
+            for attr_name, attr_type in getattr(cls, "__annotations__", {}).items():
+                if "TreeMap" in str(attr_type):
+                    setattr(instance, attr_name, TreeMap())
+            return instance
+
+    class _WriteDecorator:
+        def __call__(self, fn):
+            return fn
+
+        def payable(self, fn):
+            return fn
 
     class PublicNamespace:
-        @staticmethod
-        def write(fn):
-            return fn
+        write = _WriteDecorator()
 
         @staticmethod
         def view(fn):

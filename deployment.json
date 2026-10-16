@@ -1,8 +1,8 @@
 {
   "network": "GenLayer Studio Dev",
   "chain_id": 61999,
-  "contract_address": "0x44385162c356113EBDded526c296CCc1f60E019c",
-  "transaction_hash": "0x5fd628af734f7a43ece77d7b2622c153eee2a6b2c302c9993a7e216d334ad329",
+  "contract_address": "0x040360122957f8e9CFD8e130A6600016c3FEFb35",
+  "transaction_hash": "0x5a60420e44262d8e3cb61cffaca75382a7e483dd6b019b04c1d4f185dd58de53",
   "status": "ACCEPTED",
   "result": "MAJORITY_AGREE",
   "validators_agreed": 5
